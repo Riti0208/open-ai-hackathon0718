@@ -36,12 +36,16 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
   final speech = SpeechToText();
   final tts = FlutterTts();
   final answers = <String>[];
+  final chatHistory = <Map<String, String>>[];
   var questionIndex = 0;
   var transcript = '';
   var status = '準備中…';
   var available = false;
   var showStickerPreview = false;
   var notified = false;
+  var isGenerating = false;
+  var isChatting = false;
+  Future<void> ttsQueue = Future<void>.value();
   Uint8List? stickerBytes;
 
   @override
@@ -77,14 +81,24 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
       transcript = '';
       status = 'AIが話しているよ';
     });
-    await tts.speak(questions[questionIndex]);
+    await say(questions[questionIndex]);
     await listen();
   }
 
+  Future<void> say(String text) {
+    final next = ttsQueue.then((_) async {
+      if (!mounted) return;
+      await tts.speak(text);
+    });
+    ttsQueue = next.catchError((_) {});
+    return next;
+  }
+
   Future<void> listen() async {
-    if (!available ||
-        speech.isListening ||
-        answers.length == questions.length) {
+    if (!available || speech.isListening || isChatting) {
+      return;
+    }
+    if (answers.length == questions.length && !isGenerating) {
       return;
     }
     if (mounted) setState(() => status = '話してね');
@@ -104,6 +118,11 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
     if (!mounted) return;
     setState(() => transcript = result.recognizedWords);
     if (result.finalResult && transcript.isNotEmpty) {
+      if (isGenerating) {
+        final message = transcript;
+        handleGeneratingConversation(message);
+        return;
+      }
       answers.add(transcript);
       if (questionIndex < questions.length - 1) {
         questionIndex += 1;
@@ -117,19 +136,67 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
     }
   }
 
-  Future<void> generateSticker() async {
-    setState(() => status = 'シールを作っているよ…');
-    widget.onGeneratingChanged(true);
-    await tts.speak('ありがとう。すてきなシールを作るね。');
+  Future<void> handleGeneratingConversation(String message) async {
+    if (isChatting) return;
+    setState(() {
+      isChatting = true;
+      status = 'AIがかんがえているよ…';
+    });
     try {
-      final image = await StickerApi.generate(answers);
+      final reply = await StickerApi.chatAboutSticker(
+        answers: answers,
+        message: message,
+        history: chatHistory,
+      );
+      chatHistory.add({'role': 'user', 'content': message});
+      chatHistory.add({'role': 'assistant', 'content': reply});
       if (!mounted) return;
+      if (!isGenerating) {
+        setState(() => isChatting = false);
+        return;
+      }
       setState(() {
+        status = reply;
+        isChatting = false;
+      });
+      await say(reply);
+    } catch (_) {
+      if (!mounted) return;
+      if (!isGenerating) {
+        setState(() => isChatting = false);
+        return;
+      }
+      setState(() {
+        status = 'うん、すてき！ もう一回おしえて？';
+        isChatting = false;
+      });
+      await say('うん、すてき！ もう一回おしえて？');
+    }
+    if (mounted && isGenerating) await listen();
+  }
+
+  Future<void> generateSticker() async {
+    setState(() {
+      isGenerating = true;
+      transcript = '';
+      status = 'シールを作っているよ…';
+    });
+    widget.onGeneratingChanged(true);
+    final imageFuture = StickerApi.generate(answers);
+    await say('ありがとう。すてきなシールを作るね。待っている間も、口を押してお話しできるよ。');
+    if (mounted) await listen();
+    try {
+      final image = await imageFuture;
+      if (!mounted) return;
+      await speech.stop();
+      setState(() {
+        isGenerating = false;
         stickerBytes = image;
         status = 'シールができたよ！';
         showStickerPreview = true;
       });
       widget.onGeneratingChanged(false);
+      await say('シールができたよ！ とってもすてきにできたよ。');
       await Future<void>.delayed(const Duration(seconds: 3));
       if (!mounted || notified) return;
       notified = true;
@@ -139,6 +206,7 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
       });
       widget.onStickerReady(image);
     } catch (_) {
+      isGenerating = false;
       widget.onGeneratingChanged(false);
       if (mounted) setState(() => status = 'うまく作れなかったよ。もう一度話してね');
     }
@@ -177,7 +245,9 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
               Row(
                 children: [
                   Text(
-                    finished
+                    isGenerating
+                        ? 'つくっているよ'
+                        : finished
                         ? 'できあがり'
                         : '${questionIndex + 1} / ${questions.length}',
                     style: const TextStyle(
@@ -207,7 +277,11 @@ class VoiceSessionPanelState extends State<VoiceSessionPanel> {
               ] else ...[
                 const SizedBox(height: 5),
                 Text(
-                  finished ? 'コレクションを見てみよう' : questions[questionIndex],
+                  isGenerating
+                      ? '口を押して、シールのお話をしよう'
+                      : finished
+                      ? 'コレクションを見てみよう'
+                      : questions[questionIndex],
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),

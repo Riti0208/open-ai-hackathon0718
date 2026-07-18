@@ -232,15 +232,17 @@ class _CreateViewState extends State<_CreateView> {
                   label: 'シール作りの音声会話を始める',
                   child: GestureDetector(
                     onTap: talk,
-                    child: const SizedBox(
+                    child: SizedBox(
                       width: 190,
                       height: 136,
                       child: Center(
                         child: SizedBox(
                           key: Key('mouth-icon'),
-                          width: 154,
-                          height: 104,
-                          child: CustomPaint(painter: _MouthPainter()),
+                          width: isGenerating ? 188 : 154,
+                          height: isGenerating ? 132 : 104,
+                          child: isGenerating
+                              ? const _LoadingMouth()
+                              : const CustomPaint(painter: _MouthPainter()),
                         ),
                       ),
                     ),
@@ -724,6 +726,127 @@ class _MouthPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
+class _LoadingMouth extends StatefulWidget {
+  const _LoadingMouth();
+
+  @override
+  State<_LoadingMouth> createState() => _LoadingMouthState();
+}
+
+class _LoadingMouthState extends State<_LoadingMouth>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 760),
+  )..repeat();
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        const CustomPaint(size: Size(188, 132), painter: _OpenMouthPainter()),
+        ClipOval(
+          child: SizedBox(
+            width: 155,
+            height: 101,
+            child: Center(
+              child: AnimatedBuilder(
+                animation: controller,
+                builder: (context, _) => Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _DancerHalf(progress: controller.value, left: true),
+                    _DancerHalf(progress: controller.value, left: false),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DancerHalf extends StatelessWidget {
+  const _DancerHalf({required this.progress, required this.left});
+
+  final double progress;
+  final bool left;
+
+  @override
+  Widget build(BuildContext context) {
+    final phase = progress * math.pi * 2 + (left ? 0 : math.pi);
+    return Transform.translate(
+      offset: Offset(math.cos(phase) * 2.5, math.sin(phase) * 7),
+      child: Transform.rotate(
+        angle: math.sin(phase) * .1,
+        child: SizedBox(
+          width: 70,
+          height: 96,
+          child: ClipRect(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  top: -4,
+                  left: left ? 0 : -70,
+                  width: 140,
+                  height: 104,
+                  child: Image.asset(
+                    'assets/images/gyaru-dancers.png',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OpenMouthPainter extends CustomPainter {
+  const _OpenMouthPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final outer = Rect.fromLTWH(1, 1, size.width - 2, size.height - 2);
+    final inner = Rect.fromLTWH(15, 13, size.width - 30, size.height - 26);
+    canvas.drawOval(outer, Paint()..color = AppColors.deepPink);
+    canvas.drawOval(inner, Paint()..color = const Color(0xFF261B2C));
+    canvas.drawArc(
+      Rect.fromLTWH(36, size.height - 46, size.width - 72, 31),
+      0,
+      math.pi,
+      true,
+      Paint()..color = const Color(0xFFFF789A),
+    );
+    canvas.drawArc(
+      outer,
+      math.pi * .08,
+      math.pi * .84,
+      false,
+      Paint()
+        ..color = const Color(0xFFFFA9BE)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 6
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
 class _CollectionView extends StatelessWidget {
   const _CollectionView({required this.stickers});
 
@@ -902,6 +1025,65 @@ class _CollectionView extends StatelessWidget {
     }
   }
 
+  Future<void> showSaveOptions(BuildContext context, Uint8List bytes) async {
+    final selected = await showModalBottomSheet<_SaveOption>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => SafeArea(
+        child: Container(
+          margin: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFFCF4),
+            borderRadius: BorderRadius.circular(30),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 42,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD9CFCA),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'どのかたちで保存する？',
+                style: TextStyle(
+                  color: AppColors.ink,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _SaveOptionButton(
+                title: '保存',
+                subtitle: 'このシールを1枚で保存',
+                onTap: () => Navigator.pop(sheetContext, _SaveOption.single),
+              ),
+              const SizedBox(height: 10),
+              _SaveOptionButton(
+                title: 'コピー用に保存',
+                subtitle: '同じシールを4枚に並べて保存',
+                accent: true,
+                onTap: () => Navigator.pop(sheetContext, _SaveOption.fourUp),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (!context.mounted || selected == null) return;
+    if (selected == _SaveOption.single) {
+      await saveSticker(context, bytes);
+    } else {
+      await saveFourUpSticker(context, bytes);
+    }
+  }
+
   void showSticker(BuildContext context, Uint8List bytes) {
     showDialog<void>(
       context: context,
@@ -941,27 +1123,12 @@ class _CollectionView extends StatelessWidget {
                 right: 12,
                 child: Builder(
                   builder: (buttonContext) => IconButton.filled(
-                    onPressed: () => saveFourUpSticker(buttonContext, bytes),
-                    icon: const Icon(Icons.content_copy_rounded),
-                    tooltip: '同じシールを4枚にして保存',
+                    onPressed: () => showSaveOptions(buttonContext, bytes),
+                    icon: const Icon(Icons.download_rounded),
+                    tooltip: '保存方法を選ぶ',
                     style: IconButton.styleFrom(
                       backgroundColor: Colors.white,
                       foregroundColor: AppColors.deepPink,
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 12,
-                right: 64,
-                child: Builder(
-                  builder: (buttonContext) => IconButton.filled(
-                    onPressed: () => saveSticker(buttonContext, bytes),
-                    icon: const Icon(Icons.download_rounded),
-                    tooltip: 'このシール1枚を保存',
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      foregroundColor: AppColors.ink,
                     ),
                   ),
                 ),
@@ -1016,6 +1183,65 @@ class _CollectionView extends StatelessWidget {
                 ),
               ],
             ),
+    );
+  }
+}
+
+enum _SaveOption { single, fourUp }
+
+class _SaveOptionButton extends StatelessWidget {
+  const _SaveOptionButton({
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.accent = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: accent ? const Color(0xFFFFE1EA) : Colors.white,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: AppColors.ink,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: AppColors.muted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
